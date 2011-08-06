@@ -6,7 +6,7 @@ import hashlib
 import time
 import urlparse
 from .things import Character, Realm, Guild, Reward, Perk, Class, Race
-from .exceptions import APIError, CharacterNotFound, GuildNotFound, RealmNotFound
+from .exceptions import APIError, API304, CharacterNotFound, GuildNotFound, RealmNotFound
 from .utils import quote
 
 try:
@@ -21,7 +21,7 @@ except ImportError:
 
 __all__ = ['Connection']
 
-URL_FORMAT = 'https://%(region)s.battle.net/api/%(game)s%(path)s?%(params)s'
+URL_FORMAT = 'http://%(host)s/api/%(game)s%(path)s'
 
 logger = logging.getLogger('battlenet')
 
@@ -65,7 +65,7 @@ class Connection(object):
         hash = hmac.new(private_key, string_to_sign, hashlib.sha1).digest()
         return base64.encodestring(hash).rstrip()
 
-    def make_request(self, region, path, params=None, cache=False):
+    def make_request(self, region, path, params=None, cache=False, lastModified=None):
         params = params or {}
 
         now = time.gmtime()
@@ -77,13 +77,17 @@ class Connection(object):
         }
 
         url = URL_FORMAT % {
-            'region': region,
+            'host': region + '.battle.net' if region != 'cn' else 'battlenet.com.cn',
             'game': self.game,
-            'path': path,
-            'params': '&'.join('='.join(
+            'path': path
+        }
+        if len(params):
+            url_params = '?%(params)s' % {
+                'params': '&'.join('='.join(
                 (k, ','.join(v) if isinstance(v, (set, list)) else v))
                 for k, v in params.items() if v)
-        }
+            }
+            url = url + url_params
 
         if cache and url in self._cache:
             return self._cache[url]
@@ -93,6 +97,10 @@ class Connection(object):
         if self.public_key:
             signature = self.sign_request('GET', date, uri.path, self.private_key)
             headers['Authorization'] = 'BNET %s:%s' % (self.public_key, signature)
+        if lastModified:
+            headers['If-Modified-Since'] = '%s, %s %s %s %s:%s:%s GMT' % (DAYS[lastModified.weekday()], lastModified.strftime('%d'), 	# This looks really ugly,
+            MONTHS[int(lastModified.strftime('%m'))], lastModified.strftime('%Y'), lastModified.strftime('%H'), 						# but it seems to do the job.
+            lastModified.strftime('%M'), lastModified.strftime('%S'))
 
         logger.debug('Battle.net => ' + url)
 
@@ -102,12 +110,18 @@ class Connection(object):
             try:
                 response = eventlet_urllib2.urlopen(request)
             except (eventlet_urllib2.URLError), e:
-                raise APIError(str(e))
+                if e.code == 304:
+                    raise API304()
+                else:
+                    raise APIError(str(e))
         else:
             try:
                 response = urllib2.urlopen(request)
             except (urllib2.URLError), e:
-                raise APIError(str(e))
+                if e.code == 304:
+                    raise API304()
+                else:
+                    raise APIError(str(e))
 
         try:
             data = json.loads(response.read())
@@ -122,12 +136,11 @@ class Connection(object):
 
         return data
 
-    def get_character(self, region, realm, name, fields=None, raw=False):
+    def get_character(self, region, realm, name, fields=None, raw=False, lastModified=None):
         name = quote(name.lower())
         realm = quote(realm.lower())
-
         try:
-            data = self.make_request(region, '/character/%s/%s' % (realm, name), {'fields': fields})
+            data = self.make_request(region, '/character/%s/%s' % (realm, name), {'fields': fields} if fields else None, lastModified=lastModified)
 
             if raw:
                 return data
@@ -136,12 +149,12 @@ class Connection(object):
         except APIError:
             raise CharacterNotFound
 
-    def get_guild(self, region, realm, name, fields=None, raw=False):
+    def get_guild(self, region, realm, name, fields=None, raw=False, lastModified=None):
         name = quote(name.lower())
         realm = quote(realm.lower())
 
         try:
-            data = self.make_request(region, '/guild/%s/%s' % (realm, name), {'fields': fields})
+            data = self.make_request(region, '/guild/%s/%s' % (realm, name), {'fields': fields} if fields else None, lastModified=lastModified)
 
             if raw:
                 return data

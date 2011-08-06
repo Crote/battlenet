@@ -3,6 +3,7 @@ import collections
 import datetime
 from .enums import RACE, CLASS, QUALITY, RACE_TO_FACTION
 from .utils import make_icon_url, normalize, make_connection
+from .exceptions import API304
 
 try:
     import simplejson as json
@@ -40,7 +41,7 @@ class LazyThing(Thing):
     def _refresh_if_not_present(self, field):
         if not hasattr(self, '_' + field):
             if field not in self._data:
-                self.refresh(field)
+                self.refresh(field, 'Force')
 
             return True
 
@@ -290,12 +291,17 @@ class Character(LazyThing):
         return self._achievements
 
     def refresh(self, *fields):
+        forceRefresh = False
         for field in fields:
+            if field == 'Force': # Doing this just feels, well, wrong, but I'm probably the wrong person to change ' refresh(arg, moreargs, whatever) ' to ' refresh(['list of args']) ' or something similar. --Crote
+                forceRefresh = True
             self._fields.add(field)
-
-        self._populate_data(self.connection.get_character(self.region, self._data['realm'],
-            self.name, raw=True, fields=self._fields))
-
+        lastModified = self.last_modified if not forceRefresh and self.last_modified else None
+        try:
+            self._populate_data(self.connection.get_character(self.region, self._data['realm'],
+                self.name, raw=True, fields=self._fields, lastModified=lastModified))
+        except API304:
+            pass
         self._delete_property_fields()
 
     def get_realm_name(self):
@@ -685,12 +691,20 @@ class Guild(LazyThing):
         }[data['side']] if isinstance(data['side'], int) else data['side']).capitalize()
 
     def refresh(self, *fields):
+        forceRefresh = False
+        for field in fields:
+            if field == 'Force': # Same comment as Character.refresh()
+                forceRefresh = True
+            else:
+                self._fields.add(field)
+        lastModified = self.last_modified if not forceRefresh and self.last_modified else None
         for field in fields:
             self._fields.add(field)
-
-        self._populate_data(self.connection.get_guild(self.region, self._data['realm'],
-            self.name, raw=True, fields=self._fields))
-
+        try:
+            self._populate_data(self.connection.get_guild(self.region, self._data['realm'],
+                self.name, raw=True, fields=self._fields, lastModified=lastModified))
+        except API304:
+            pass
         self._delete_property_fields()
 
     @property

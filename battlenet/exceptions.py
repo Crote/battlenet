@@ -1,6 +1,9 @@
 class APIError(Exception):
     pass
 
+class API304(Exception):
+    pass
+
 class CharacterNotFound(APIError):
     pass
 
