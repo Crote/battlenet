@@ -42,3 +42,6 @@ from .utils import normalize
 from .utils import quote
 from .utils import make_icon_url
 from .utils import make_connection
+
+from os import path
+CERT = path.dirname(__file__) + '/cacert.cer' # Contains the CA certs required to access *.battle.net and *.battlenet.com.cn

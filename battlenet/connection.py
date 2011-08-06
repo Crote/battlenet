@@ -9,6 +9,27 @@ from .things import Character, Realm, Guild, Reward, Perk, Class, Race
 from .exceptions import APIError, API304, CharacterNotFound, GuildNotFound, RealmNotFound
 from .utils import quote
 
+# Fixing HTTPS
+import httplib
+import socket
+import ssl
+
+def Safeconnect(self):
+    "Connect to a host on a given (SSL) port."
+    # As stated in the urllib2 documentation, it doesn't provide ANY kind of certificate validation, hence making https worthless.
+    # By hardcoding the certs in this function, we can force it to validate our certs regardless.
+    # I have absolutely no idea what the effect could be on anything importing this api library, but this solves our issues for now.
+
+    from battlenet import CERT
+    sock = socket.create_connection((self.host, self.port), self.timeout, self.source_address)
+    if self._tunnel_host:
+        self.sock = sock
+        self._tunnel()
+    self.sock = ssl.wrap_socket(sock, self.key_file, self.cert_file, cert_reqs=ssl.CERT_REQUIRED, ca_certs=CERT)
+
+httplib.HTTPSConnection.connect = Safeconnect
+# HTTPS should be secure now.
+
 try:
     import simplejson as json
 except ImportError:
@@ -109,18 +130,19 @@ class Connection(object):
         if self.eventlet and eventlet_urllib2:
             try:
                 response = eventlet_urllib2.urlopen(request)
-            except (eventlet_urllib2.URLError), e:
-                if e.code == 304:
+            except (eventlet_urllib2.URLError, eventlet_urllib2.HTTPError), e:
+                if isinstance(e, eventlet_urllib2.HTTPError) and e.code == 304:
                     raise API304()
                 else:
                     raise APIError(str(e))
         else:
             try:
                 response = urllib2.urlopen(request)
-            except (urllib2.URLError), e:
-                if e.code == 304:
+            except (urllib2.URLError, urllib2.HTTPError), e:
+                if isinstance(e, urllib2.HTTPError) and e.code == 304:
                     raise API304()
                 else:
+                    print e
                     raise APIError(str(e))
 
         try:
