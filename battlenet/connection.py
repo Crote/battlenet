@@ -11,27 +11,6 @@ from .things import Character, Realm, Guild, Reward, Perk, Class, Race
 from .exceptions import APIError, API304, CharacterNotFound, GuildNotFound, RealmNotFound
 from .utils import quote
 
-# Fixing HTTPS
-import httplib
-import socket
-import ssl
-
-def Safeconnect(self):
-    "Connect to a host on a given (SSL) port."
-    # As stated in the urllib2 documentation, it doesn't provide ANY kind of certificate validation, hence making https worthless.
-    # By hardcoding the certs in this function, we can force it to validate our certs regardless.
-    # I have absolutely no idea what the effect could be on anything importing this api library, but this solves our issues for now.
-
-    from battlenet import CERT
-    sock = socket.create_connection((self.host, self.port), self.timeout, self.source_address)
-    if self._tunnel_host:
-        self.sock = sock
-        self._tunnel()
-    self.sock = ssl.wrap_socket(sock, self.key_file, self.cert_file, cert_reqs=ssl.CERT_REQUIRED, ca_certs=CERT)
-
-httplib.HTTPSConnection.connect = Safeconnect
-# HTTPS should be secure now.
-
 try:
     import simplejson as json
 except ImportError:
@@ -41,6 +20,35 @@ try:
     from eventlet.green import urllib2 as eventlet_urllib2
 except ImportError:
     eventlet_urllib2 = None
+
+# Fixing HTTPS
+# ---------------
+# As stated in the urllib2 documentation, it doesn't provide ANY kind of certificate validation, hence making https worthless.
+# By hardcoding the certs in this function, we can force it to validate our certs regardless.
+# The certificate check is used by using _VerifiedOpener.open() instead of urllib2.urlopen()
+
+import httplib
+import socket
+import ssl
+class _VerHTTPSConn(httplib.HTTPSConnection):
+    def connect(self):
+        from battlenet import CERT
+        sock = socket.create_connection((self.host, self.port), self.timeout, self.source_address)
+        if self._tunnel_host:
+            self.sock = sock
+            self._tunnel()
+        self.sock = ssl.wrap_socket(sock, self.key_file, self.cert_file, cert_reqs=ssl.CERT_REQUIRED, ca_certs=CERT)
+
+class _VerHTTPSHandler(urllib2.HTTPSHandler):
+    def __init__(self, connection_class = _VerHTTPSConn):
+        self.specialized_conn_class = connection_class
+        urllib2.HTTPSHandler.__init__(self)
+    def https_open(self, req):
+        return self.do_open(self.specialized_conn_class, req)
+
+if eventlet_urllib2:
+    _VerifiedEventletOpener = eventlet_urllib2.build_opener(_VerHTTPSHandler)
+_VerifiedOpener = urllib2.build_opener(_VerHTTPSHandler)
 
 __all__ = ['Connection']
 
@@ -132,7 +140,7 @@ class Connection(object):
 
         if self.eventlet and eventlet_urllib2:
             try:
-                response = eventlet_urllib2.urlopen(request)
+                response = _VerifiedEventletOpener.open(request)
             except (eventlet_urllib2.URLError, eventlet_urllib2.HTTPError), e:
                 if isinstance(e, eventlet_urllib2.HTTPError) and e.code == 304:
                     raise API304()
@@ -140,7 +148,7 @@ class Connection(object):
                     raise APIError(str(e))
         else:
             try:
-                response = urllib2.urlopen(request)
+                response = _VerifiedOpener.open(request)
             except (urllib2.URLError, urllib2.HTTPError), e:
                 if isinstance(e, urllib2.HTTPError) and e.code == 304:
                     raise API304()
