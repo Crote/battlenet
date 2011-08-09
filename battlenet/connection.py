@@ -5,6 +5,8 @@ import hmac
 import hashlib
 import time
 import urlparse
+import gzip
+import StringIO
 from .things import Character, Realm, Guild, Reward, Perk, Class, Race
 from .exceptions import APIError, API304, CharacterNotFound, GuildNotFound, RealmNotFound
 from .utils import quote
@@ -94,7 +96,8 @@ class Connection(object):
             MONTHS[now[1]], now[0], now[3], now[4], now[5])
 
         headers = {
-            'Date': date
+            'Date': date,
+            'Accept-Encoding': 'gzip'
         }
 
         url = URL_FORMAT % {
@@ -144,6 +147,12 @@ class Connection(object):
                 else:
                     print e
                     raise APIError(str(e))
+
+        if 'content-encoding' in response.info() and response.info()['content-encoding'] == 'gzip':
+            response = gzip.GzipFile(fileobj=StringIO.StringIO(response.read()))
+                # StringIO is needed here due to Gzip seeking back/forwards in the file-like object, but the remote server provides a stream of bytes, 
+                # which isn't remotely seekable at all, so if you cut out StringIO you basically end up with an empty data set.
+                # It's an inelegant hack, but probably the best solution.
 
         try:
             data = json.loads(response.read())
